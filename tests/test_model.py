@@ -62,7 +62,7 @@ def test_expenses_and_danger_date():
     assert fc.mid[2] == 1000 and fc.mid[3] == 600
     assert fc.danger_likely == date(2026, 8, 4)  # third rent payment: 1000 - 3 * 400
     assert fc.breach_probability == 1.0
-    assert sum(fc.weekly_out) == 400 * len(fc.scheduled_out)
+    assert sum(fc.weekly_out) == 400 * len(fc.scheduled)
 
 
 def test_no_danger_when_cash_is_ample():
@@ -117,3 +117,10 @@ def test_projection_skips_irregular_or_inactive_clients():
     assert project_billing(one_off, TODAY) == []
     stale = [Invoice("B", "x", TODAY - timedelta(days=400 + 30 * k), TODAY - timedelta(days=370 + 30 * k), 5) for k in range(4)]
     assert project_billing(stale, TODAY) == []
+
+
+def test_scheduled_income_raises_balance_and_inflow():
+    fc = forecast(history("A", [0] * 3), [Expense("retainer", -500, TODAY + timedelta(days=2), "once")],
+                  settings(cash=100))
+    assert fc.mid[1] == 100 and fc.mid[2] == 600
+    assert fc.weekly_in[0] == 500 and fc.weekly_out[0] == 0

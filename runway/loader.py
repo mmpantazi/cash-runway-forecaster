@@ -4,6 +4,7 @@ from __future__ import annotations
 import calendar
 import csv
 import re
+import unicodedata
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -14,20 +15,22 @@ FREQUENCIES = {
 }
 
 INVOICE_COLUMNS = {
-    "client": ("client", "customer", "name", "clientul", "denumire"),
-    "number": ("invoice", "invoice_id", "number", "id", "nr", "factura", "numar"),
-    "issued": ("issued", "issue_date", "invoice_date", "date", "data", "data_emitere"),
+    "client": ("client", "customer", "name", "clientul", "partener", "nume_client", "denumire"),
+    "number": ("invoice", "invoice_id", "number", "id", "nr", "nr_factura", "factura", "numar"),
+    "issued": ("issued", "issue_date", "invoice_date", "date", "data", "data_emitere", "data_emiterii", "data_factura"),
     "due": ("due", "due_date", "scadenta", "data_scadenta"),
-    "amount": ("amount", "total", "value", "suma", "valoare"),
-    "paid": ("paid", "paid_date", "payment_date", "date_paid", "data_plata", "incasat"),
+    "amount": ("amount", "total", "value", "suma", "valoare", "total_cu_tva", "total_factura"),
+    "paid": ("paid", "paid_date", "payment_date", "date_paid", "data_plata", "data_incasare", "data_incasarii", "incasat"),
 }
 EXPENSE_COLUMNS = {
     "name": ("description", "name", "expense", "category", "descriere", "denumire"),
-    "amount": ("amount", "total", "value", "suma", "valoare"),
+    "amount": ("amount", "total", "value", "suma", "valoare", "total_cu_tva", "total_factura"),
     "date": ("date", "start", "next_date", "due_date", "data"),
     "frequency": ("frequency", "repeat", "recurrence", "frecventa"),
     "end": ("end", "end_date", "until", "pana_la"),
+    "type": ("type", "direction", "kind", "tip"),
 }
+INCOME_WORDS = {"in", "income", "inflow", "incasare", "venit", "intrare"}
 
 
 class DataError(ValueError):
@@ -46,6 +49,7 @@ class Invoice:
 
 @dataclass
 class Expense:
+    """A scheduled payment. Positive amount = money out, negative = money in (retainer, grant...)."""
     name: str
     amount: float
     start: date
@@ -86,6 +90,12 @@ def parse_amount(text: str) -> float:
     return -value if negative else value
 
 
+def _plain(name: str) -> str:
+    """Lower-case, accent-free, underscore-separated header: 'Dată încasare' -> 'data_incasare'."""
+    ascii_name = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode()
+    return re.sub(r"[\s.\-]+", "_", ascii_name.strip().lower()).strip("_")
+
+
 def _read_rows(path: Path) -> tuple[list[str], list[dict[str, str]]]:
     try:
         text = Path(path).read_text(encoding="utf-8-sig")
@@ -100,7 +110,7 @@ def _read_rows(path: Path) -> tuple[list[str], list[dict[str, str]]]:
     first = text.splitlines()[0]
     delimiter = max(",;\t", key=first.count)
     reader = csv.DictReader(text.splitlines(), delimiter=delimiter)
-    header = [h.strip().lower().replace(" ", "_") for h in (reader.fieldnames or [])]
+    header = [_plain(h) for h in (reader.fieldnames or [])]
     reader.fieldnames = header
     rows = [{k: (v or "").strip() for k, v in r.items() if k} for r in reader]
     return header, rows
@@ -126,6 +136,7 @@ def load_invoices(path, default_terms: int = 30, warnings: list[str] | None = No
     if "due" not in col and "issued" not in col:
         raise DataError(f"{path}: need a due date or an issue date column")
     out = []
+    names: dict[str, str] = {}
     for n, row in enumerate(rows, start=2):
         try:
             amount = parse_amount(row[col["amount"]])
@@ -145,6 +156,7 @@ def load_invoices(path, default_terms: int = 30, warnings: list[str] | None = No
         except (ValueError, KeyError) as exc:
             warnings.append(f"{Path(path).name} line {n}: skipped ({exc})")
             continue
+        client = names.setdefault(" ".join(client.split()).casefold(), " ".join(client.split()))
         out.append(Invoice(client, row.get(col.get("number", ""), "") or f"row{n}", issued, due, amount, paid))
     if not out:
         raise DataError(f"{path}: no usable invoice rows")
@@ -159,6 +171,8 @@ def load_expenses(path, warnings: list[str] | None = None) -> list[Expense]:
     for n, row in enumerate(rows, start=2):
         try:
             amount = abs(parse_amount(row[col["amount"]]))
+            if row.get(col.get("type", ""), "").lower() in INCOME_WORDS:
+                amount = -amount
             start = parse_date(row[col["date"]])
             freq = row.get(col.get("frequency", ""), "").lower() or "once"
             if freq not in FREQUENCIES:

@@ -147,7 +147,7 @@ class Forecast:
     opening: float
     buffer: float
     profiles: dict[str, ClientProfile] = field(default_factory=dict)
-    scheduled_out: list[tuple[date, str, float]] = field(default_factory=list)
+    scheduled: list[tuple[date, str, float]] = field(default_factory=list)
 
 
 def percentile(sorted_values: list[float], q: float) -> float:
@@ -176,10 +176,14 @@ def forecast(invoices: list[Invoice], expenses: list[Expense], settings: Setting
 
     last_day = today + timedelta(days=HORIZON_DAYS - 1)
     out_by_day = [0.0] * HORIZON_DAYS
+    in_by_day = [0.0] * HORIZON_DAYS
     scheduled = []
     for exp in expenses:
         for d in occurrences(exp, today, last_day):
-            out_by_day[(d - today).days] += exp.amount
+            if exp.amount >= 0:
+                out_by_day[(d - today).days] += exp.amount
+            else:
+                in_by_day[(d - today).days] -= exp.amount
             scheduled.append((d, exp.name, exp.amount))
     scheduled.sort()
 
@@ -187,7 +191,7 @@ def forecast(invoices: list[Invoice], expenses: list[Expense], settings: Setting
     paths = []
     inflow_by_week = [0.0] * (HORIZON_DAYS // 7)
     for _ in range(settings.runs):
-        incoming = [0.0] * HORIZON_DAYS
+        incoming = list(in_by_day)
         for item in open_items:
             if rng.random() < item.p_bad:
                 continue

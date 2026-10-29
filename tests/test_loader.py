@@ -80,3 +80,24 @@ def test_expense_frequency_aliases(tmp_path):
     w = []
     exp = load_expenses(f, w)
     assert len(exp) == 1 and exp[0].frequency == "monthly" and len(w) == 1
+
+
+def test_expense_type_column_makes_income(tmp_path):
+    f = tmp_path / "e.csv"
+    f.write_text("description,amount,date,frequency,type\nRetainer,1500,2026-01-05,monthly,income\nRent,900,2026-01-01,monthly,\n")
+    exp = load_expenses(f)
+    assert exp[0].amount == -1500 and exp[1].amount == 900
+
+
+def test_client_names_are_normalised(tmp_path):
+    f = tmp_path / "f.csv"
+    f.write_text("client,amount,due\nAcme  Ltd,1,2026-01-01\nacme ltd ,2,2026-01-02\nACME LTD,3,2026-01-03\n")
+    assert {i.client for i in load_invoices(f)} == {"Acme Ltd"}
+
+
+def test_accented_romanian_headers(tmp_path):
+    f = tmp_path / "f.csv"
+    f.write_text("Partener;Nr. factură;Dată emitere;Scadență;Total cu TVA;Dată încasare\n"
+                 "Alfa SRL;A1;01.02.2026;03.03.2026;1.190,00 RON;10.03.2026\n", encoding="utf-8")
+    inv = load_invoices(f)[0]
+    assert inv.client == "Alfa SRL" and inv.amount == 1190 and inv.paid == date(2026, 3, 10)

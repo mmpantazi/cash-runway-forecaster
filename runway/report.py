@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import html
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 
 from .i18n import STRINGS
 from .model import HORIZON_DAYS, Forecast
@@ -94,15 +94,48 @@ def week_rows(fc: Forecast) -> list[list[str]]:
     return rows
 
 
+def payments_before(fc: Forecast, limit: date, lang: str) -> str | None:
+    """Biggest scheduled payments in the 7 days up to `limit`."""
+    items = sorted(((a, n, d) for d, n, a in fc.scheduled
+                    if a > 0 and limit - timedelta(days=7) <= d <= limit), reverse=True)[:3]
+    if not items:
+        return None
+    text = ", ".join(f"{n} {money(a)} ({d.strftime('%d %b')})" for a, n, d in items)
+    return STRINGS[lang]["before"].format(items=text)
+
+
 def headline(fc: Forecast, lang: str, today: date) -> list[str]:
     s = STRINGS[lang]
-    return [
+    lines = [
         f"{s['danger']}",
         f"  {s['likely']}: {_date_or(fc.danger_likely, s, today)}",
         f"  {s['possible']}: {_date_or(fc.danger_possible, s, today)}",
         f"  {s['chance']}: {pct(fc.breach_probability)}",
         "  " + s["low_point"].format(low=money(min(fc.low)), mid=money(min(fc.mid))),
     ]
+    first = fc.danger_possible
+    if first and first > today and (hit := payments_before(fc, first, lang)):
+        lines.append("  " + hit)
+    return lines
+
+
+def render_backtest(results, lang: str) -> str:
+    s = STRINGS[lang]
+    if not results:
+        return s["bt_none"]
+    rows = [[s["bt_weeks"].format(n=r.days // 7), str(r.cases), pct(r.inside), pct(r.below), pct(r.above),
+             money(r.mean_abs_error), money(r.mean_open)] for r in results]
+    cases = sum(r.cases for r in results)
+    inside = sum(r.inside * r.cases for r in results) / cases
+    if cases < 10:
+        verdict = s["bt_few"]
+    elif inside < 0.7:
+        verdict = s["bt_narrow"]
+    elif inside > 0.95:
+        verdict = s["bt_wide"]
+    else:
+        verdict = s["bt_ok"]
+    return "\n".join([s["bt_title"], "", _table(s["bt_head"], rows), "", s["bt_note"], verdict])
 
 
 def lever_lines(levers: list[Lever], lang: str, today: date) -> list[str]:

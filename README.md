@@ -36,7 +36,7 @@ Install as a command with `pip install .`, then run `runway forecast ...`.
 
 ### invoices.csv
 
-One row per invoice, paid or not. Comma, semicolon or tab separated; dates `2026-03-31`, `31.03.2026` or `31/03/2026`.
+One row per invoice, paid or not. Comma, semicolon or tab separated; accents and spacing in headers are ignored (`Dată încasare` = `data_incasare`); dates `2026-03-31`, `31.03.2026` or `31/03/2026`.
 
 | column (aliases) | required | |
 |---|---|---|
@@ -58,8 +58,18 @@ Invoices with a future date are treated as planned invoices.
 | `date` | first (or only) date; past dates of recurring items are rolled forward |
 | `frequency` | `once` (default), `weekly`, `biweekly`, `monthly`, `quarterly`, `yearly` (or RO: unic, saptamanal, lunar, trimestrial, anual) |
 | `end` | optional last date |
+| `type` | optional; `income` (or `in`, `incasare`, `venit`) marks money coming in, such as a retainer or grant |
 
 Rows that cannot be read are skipped and listed under "Notes" in the report.
+
+## Can I trust the band? Backtest it
+
+```bash
+python -m runway backtest --invoices invoices.csv
+```
+
+Replays past dates every 14 days using only what was known then, and checks whether the cash really collected from the invoices
+already open fell inside the best-to-worst band (it should, about 80% of the time). Needs more than 5 paid invoices and, for a verdict, 10 or more replayed cases.
 
 ## How the forecast works
 
@@ -70,7 +80,7 @@ Rows that cannot be read are skipped and listed under "Notes" in the report.
 5. **Simulation**: 2000 possible futures are played day by day. *Worst* = 10th percentile of the balance, *best* = 90th, *likely* = median. The danger date is the first day the likely (or worst-case) line is below your buffer, next to the chance that any future dips below it.
 6. **"What moves the danger date"** reruns the forecast with your biggest clients paying exactly on the due date.
 
-Limits: it only knows invoices and expenses you give it (no new-client sales, no tax guesses), and percentile lines per day are not single paths. Treat it as a risk radar, not a promise.
+Limits: the backtest judges payment timing only, not your expenses. The forecast only knows invoices and expenses you give it (no new-client sales, no tax guesses), and percentile lines per day are not single paths. Treat it as a risk radar, not a promise.
 
 ## Development
 

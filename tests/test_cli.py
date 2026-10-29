@@ -79,3 +79,10 @@ def test_nice_ticks_are_round():
     from runway.report import nice_ticks
     assert nice_ticks(-6705, 14000) == [-5000, 0, 5000, 10000]
     assert all(t % 100 == 0 for t in nice_ticks(0, 900))
+
+
+def test_danger_names_the_payments_just_before(capsys, files):
+    inv, exp, _ = files
+    _, out, _ = run(capsys, "forecast", "--invoices", str(inv), "--expenses", str(exp), "--cash", "1000",
+                    "--today", "2026-06-01", "--no-projection")
+    assert "Largest payments in the week before: Rent 900" in out

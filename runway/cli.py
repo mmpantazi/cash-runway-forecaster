@@ -7,11 +7,12 @@ from datetime import date
 from pathlib import Path
 
 from . import __version__
+from .backtest import backtest
 from .demo import write_demo
 from .i18n import STRINGS
 from .loader import DataError, load_expenses, load_invoices, parse_amount, parse_date
 from .model import Settings, forecast, is_open, learn_profiles, project_billing
-from .report import LEVER_CLIENTS, Lever, money, notes, render_html, render_text, stale_notes
+from .report import LEVER_CLIENTS, Lever, money, notes, render_backtest, render_html, render_text, stale_notes
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -34,6 +35,13 @@ def build_parser() -> argparse.ArgumentParser:
     f.add_argument("--seed", type=int, default=1)
     f.add_argument("--lang", choices=sorted(STRINGS), default="en")
     f.add_argument("--html", type=Path, help="also write a self-contained HTML report here")
+
+    b = sub.add_parser("backtest", help="replay past dates to check how well the forecast band holds")
+    b.add_argument("--invoices", required=True, type=Path)
+    b.add_argument("--today", help="end of the history to replay (default: today)")
+    b.add_argument("--terms", type=int, default=30)
+    b.add_argument("--step", type=int, default=14, help="days between replayed dates (default 14)")
+    b.add_argument("--lang", choices=sorted(STRINGS), default="en")
 
     d = sub.add_parser("demo", help="write sample CSVs and show their forecast")
     d.add_argument("folder", type=Path, nargs="?", default=Path("runway-demo"))
@@ -84,6 +92,13 @@ def run_forecast(args) -> int:
     return 0
 
 
+def run_backtest(args) -> int:
+    today = parse_date(args.today) if args.today else date.today()
+    invoices = load_invoices(args.invoices, args.terms)
+    print(render_backtest(backtest(invoices, today, step=args.step), args.lang))
+    return 0
+
+
 def run_demo(args) -> int:
     today = date.today()
     inv, exp = write_demo(args.folder, today)
@@ -96,7 +111,7 @@ def run_demo(args) -> int:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
-        return run_demo(args) if args.command == "demo" else run_forecast(args)
+        return {"demo": run_demo, "backtest": run_backtest}.get(args.command, run_forecast)(args)
     except (DataError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
