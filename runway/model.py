@@ -11,6 +11,7 @@ from itertools import accumulate
 from .loader import Expense, Invoice, occurrences
 
 HORIZON_DAYS = 91
+PROJECTED = "projected"
 DECAY = 0.85
 SHRINK = 3
 PRIOR_DELAYS = [-2, 0, 3, 7, 14, 21, 30]
@@ -32,6 +33,7 @@ class ClientProfile:
     name: str
     delays: list[tuple[int, float]]  # (days after due date, recency weight), newest first
     open_amount: float = 0.0
+    projected_amount: float = 0.0
 
     @property
     def n(self) -> int:
@@ -70,8 +72,9 @@ def learn_profiles(invoices: list[Invoice], today: date) -> dict[str, ClientProf
     for name, items in by_client.items():
         paid = sorted((i for i in items if not is_open(i, today)), key=lambda i: i.paid, reverse=True)
         delays = [((i.paid - i.due).days, DECAY ** rank) for rank, i in enumerate(paid)]
-        open_amount = sum(i.amount for i in items if is_open(i, today))
-        profiles[name] = ClientProfile(name, delays, open_amount)
+        real = [i for i in items if is_open(i, today) and i.number != PROJECTED]
+        proj = [i for i in items if i.number == PROJECTED]
+        profiles[name] = ClientProfile(name, delays, sum(i.amount for i in real), sum(i.amount for i in proj))
     return profiles
 
 
@@ -214,3 +217,34 @@ def forecast(invoices: list[Invoice], expenses: list[Expense], settings: Setting
         breaches / settings.runs,
         first_below(days, mid, settings.buffer), first_below(days, low, settings.buffer),
         settings.cash, settings.buffer, profiles, scheduled)
+
+
+
+def project_billing(invoices: list[Invoice], today: date) -> list[Invoice]:
+    """Extend each regularly billed client's rhythm (median interval and amount) over the horizon.
+
+    Clients with fewer than 3 invoices, an irregular rhythm outside 7-120 days, or no invoice
+    for more than three intervals are treated as one-off and not projected.
+    """
+    last_day = today + timedelta(days=HORIZON_DAYS - 1)
+    by_client: dict[str, list[Invoice]] = {}
+    for inv in invoices:
+        by_client.setdefault(inv.client, []).append(inv)
+    projected = []
+    for client, items in by_client.items():
+        items = sorted(items, key=lambda i: i.issued)
+        if len(items) < 3:
+            continue
+        gaps = [(b.issued - a.issued).days for a, b in zip(items, items[1:])]
+        interval = int(statistics.median(gaps))
+        if not 7 <= interval <= 120 or (today - items[-1].issued).days > 3 * interval:
+            continue
+        recent = items[-6:]
+        amount = statistics.median(i.amount for i in recent)
+        terms = int(statistics.median((i.due - i.issued).days for i in recent))
+        issued = items[-1].issued + timedelta(days=interval)
+        while issued + timedelta(days=terms) <= last_day:
+            if issued + timedelta(days=terms) >= today:
+                projected.append(Invoice(client, PROJECTED, issued, issued + timedelta(days=terms), amount))
+            issued += timedelta(days=interval)
+    return projected

@@ -91,6 +91,8 @@ def _read_rows(path: Path) -> tuple[list[str], list[dict[str, str]]]:
         text = Path(path).read_text(encoding="utf-8-sig")
     except FileNotFoundError:
         raise DataError(f"file not found: {path}") from None
+    except OSError as exc:
+        raise DataError(f"cannot read {path}: {exc.strerror}") from None
     except UnicodeDecodeError:
         text = Path(path).read_text(encoding="latin-1")
     if not text.strip():
