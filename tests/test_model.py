@@ -124,3 +124,12 @@ def test_scheduled_income_raises_balance_and_inflow():
                   settings(cash=100))
     assert fc.mid[1] == 100 and fc.mid[2] == 600
     assert fc.weekly_in[0] == 500 and fc.weekly_out[0] == 0
+
+
+def test_correlation_makes_one_client_pay_all_or_nothing():
+    inv = history("A", [0, 40] * 4) + [open_inv("A", 0, 1000), open_inv("A", 0, 1000)]
+    together = forecast(inv, [], settings(bad_debt=0, correlation=1.0, runs=600))
+    apart = forecast(inv, [], settings(bad_debt=0, correlation=0.0, runs=600))
+    day = 20
+    assert (together.low[day], together.mid[day], together.high[day]) in {(0, 0, 2000), (0, 2000, 2000)}
+    assert apart.low[day] == 0 and apart.mid[day] == 1000 and apart.high[day] == 2000

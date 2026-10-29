@@ -14,7 +14,7 @@ HORIZON_DAYS = 91
 PROJECTED = "projected"
 DECAY = 0.85
 SHRINK = 3
-PRIOR_DELAYS = [-2, 0, 3, 7, 14, 21, 30]
+PRIOR_DELAYS = [-2, 0, 5, 10, 18, 25, 40, 60]
 TAIL_MEAN_DAYS = 14
 
 
@@ -26,6 +26,7 @@ class Settings:
     runs: int = 2000
     seed: int = 1
     bad_debt: float = 0.02
+    correlation: float = 0.5
 
 
 @dataclass
@@ -125,12 +126,28 @@ def prepare_open(invoices, profiles, settings) -> list[_OpenInvoice]:
     return prepared
 
 
-def draw_delay(item: _OpenInvoice, rng: random.Random) -> int:
-    if item.own and rng.random() < item.p_own:
-        return item.own.draw(rng)
-    if item.pooled:
-        return item.pooled.draw(rng)
-    return item.overdue + int(rng.expovariate(1 / TAIL_MEAN_DAYS))
+def quantile_draws(pool: _Pool, quantiles: list[float]) -> list[int]:
+    total, values, cum = pool.cum[-1], pool.values, pool.cum
+    return [values[bisect.bisect(cum, q * total)] for q in quantiles]
+
+
+def draw_delays(item: _OpenInvoice, rng: random.Random, mood: list[float], correlation: float) -> list[int | None]:
+    """One payment delay per simulated future; None where the invoice is never paid.
+
+    `mood` is the client's quantile in each future (a slow month is slow for all its invoices);
+    each invoice follows it with probability `correlation`, otherwise draws on its own.
+    """
+    quantiles = [m if rng.random() < correlation else rng.random() for m in mood]
+    if item.own and item.pooled:
+        own, pooled = quantile_draws(item.own, quantiles), quantile_draws(item.pooled, quantiles)
+        delays = [o if rng.random() < item.p_own else p for o, p in zip(own, pooled)]
+    elif item.own or item.pooled:
+        delays = quantile_draws(item.own or item.pooled, quantiles)
+    else:
+        delays = [item.overdue + int(rng.expovariate(1 / TAIL_MEAN_DAYS)) for _ in mood]
+    if item.p_bad:
+        return [None if rng.random() < item.p_bad else d for d in delays]
+    return delays
 
 
 @dataclass
@@ -188,22 +205,25 @@ def forecast(invoices: list[Invoice], expenses: list[Expense], settings: Setting
     scheduled.sort()
 
     rng = random.Random(settings.seed)
-    paths = []
+    runs = settings.runs
+    incoming = [list(in_by_day) for _ in range(runs)]
+    moods: dict[str, list[float]] = {}
+    for item in open_items:
+        offset = (item.invoice.due - today).days
+        amount = item.invoice.amount
+        mood = moods.setdefault(item.invoice.client, [rng.random() for _ in range(runs)])
+        for row, delay in zip(incoming, draw_delays(item, rng, mood, settings.correlation)):
+            if delay is not None and (day := max(0, offset + delay)) < HORIZON_DAYS:
+                row[day] += amount
     inflow_by_week = [0.0] * (HORIZON_DAYS // 7)
-    for _ in range(settings.runs):
-        incoming = list(in_by_day)
-        for item in open_items:
-            if rng.random() < item.p_bad:
-                continue
-            idx = max(0, (item.invoice.due - today).days + draw_delay(item, rng))
-            if idx < HORIZON_DAYS:
-                incoming[idx] += item.invoice.amount
+    paths = []
+    for row in incoming:
         balance = settings.cash
         path = []
         for i in range(HORIZON_DAYS):
-            balance += incoming[i] - out_by_day[i]
+            balance += row[i] - out_by_day[i]
             path.append(balance)
-            inflow_by_week[i // 7] += incoming[i]
+            inflow_by_week[i // 7] += row[i]
         paths.append(path)
 
     low, mid, high = [], [], []

@@ -86,3 +86,11 @@ def test_danger_names_the_payments_just_before(capsys, files):
     _, out, _ = run(capsys, "forecast", "--invoices", str(inv), "--expenses", str(exp), "--cash", "1000",
                     "--today", "2026-06-01", "--no-projection")
     assert "Largest payments in the week before: Rent 900" in out
+
+
+def test_bad_numeric_options_are_rejected(capsys, files):
+    inv, _, _ = files
+    code, _, err = run(capsys, "forecast", "--invoices", str(inv), "--cash", "1", "--correlation", "2")
+    assert code == 2 and "between 0 and 1" in err
+    with pytest.raises(SystemExit):
+        main(["forecast", "--invoices", str(inv), "--cash", "1", "--runs", "0"])

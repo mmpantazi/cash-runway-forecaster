@@ -15,6 +15,13 @@ from .model import Settings, forecast, is_open, learn_profiles, project_billing
 from .report import LEVER_CLIENTS, Lever, money, notes, render_backtest, render_html, render_text, stale_notes
 
 
+def positive_int(text: str) -> int:
+    value = int(text)
+    if value < 1:
+        raise argparse.ArgumentTypeError("must be 1 or more")
+    return value
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="runway", description="13-week cash forecast from each client's real payment habits.")
@@ -31,7 +38,9 @@ def build_parser() -> argparse.ArgumentParser:
     f.add_argument("--bad-debt", type=float, default=0.02, help="chance an open invoice is never paid")
     f.add_argument("--no-projection", action="store_true",
                    help="do not assume regular clients keep sending invoices at their usual rhythm")
-    f.add_argument("--runs", type=int, default=2000, help="simulated futures (default 2000)")
+    f.add_argument("--runs", type=positive_int, default=2000, help="simulated futures (default 2000)")
+    f.add_argument("--correlation", type=float, default=0.5,
+                   help="0-1: how much one client's invoices pay slow or fast together (default 0.5)")
     f.add_argument("--seed", type=int, default=1)
     f.add_argument("--lang", choices=sorted(STRINGS), default="en")
     f.add_argument("--html", type=Path, help="also write a self-contained HTML report here")
@@ -58,6 +67,9 @@ def stale_counts(invoices, today) -> dict[str, int]:
 
 
 def run_forecast(args) -> int:
+    for name, value in (("--correlation", args.correlation), ("--bad-debt", args.bad_debt)):
+        if not 0 <= value <= 1:
+            raise ValueError(f"{name} must be between 0 and 1")
     today = parse_date(args.today) if args.today else date.today()
     warnings: list[str] = []
     invoices = load_invoices(args.invoices, args.terms, warnings)
@@ -69,7 +81,7 @@ def run_forecast(args) -> int:
             warnings.append(STRINGS[args.lang]["projected"].format(
                 n=len(projected), total=money(sum(i.amount for i in projected))))
     settings = Settings(cash=parse_amount(args.cash), today=today, buffer=parse_amount(args.buffer),
-                        runs=args.runs, seed=args.seed, bad_debt=args.bad_debt)
+                        runs=args.runs, seed=args.seed, bad_debt=args.bad_debt, correlation=args.correlation)
     fc = forecast(invoices, expenses, settings)
 
     levers = []
@@ -104,11 +116,14 @@ def run_demo(args) -> int:
     inv, exp = write_demo(args.folder, today)
     print(f"Sample files written to {args.folder}/ ({inv.name}, {exp.name})\n")
     ns = argparse.Namespace(invoices=inv, expenses=exp, cash="14000", buffer="2000", today=None, terms=30,
-                            bad_debt=0.02, no_projection=False, runs=2000, seed=1, lang=args.lang, html=args.folder / "report.html")
+                            bad_debt=0.02, no_projection=False, correlation=0.5, runs=2000, seed=1, lang=args.lang, html=args.folder / "report.html")
     return run_forecast(ns)
 
 
 def main(argv: list[str] | None = None) -> int:
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
     args = build_parser().parse_args(argv)
     try:
         return {"demo": run_demo, "backtest": run_backtest}.get(args.command, run_forecast)(args)

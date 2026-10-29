@@ -27,10 +27,13 @@ python -m runway forecast --invoices invoices.csv --expenses expenses.csv \
 | `--today` | start date, default today |
 | `--terms` | payment terms in days when an invoice has no due date (default 30) |
 | `--bad-debt` | chance that a normal open invoice is never paid (default 0.02) |
+| `--correlation` | 0-1, how strongly one client's invoices pay slow or fast together (default 0.5; 0 = independent) |
 | `--no-projection` | do not assume regular clients keep invoicing at their usual rhythm |
 | `--html FILE` | also write a self-contained report with a chart (hover for values) |
 | `--lang en\|ro` | output language |
 | `--runs`, `--seed` | simulations (default 2000) and random seed (same inputs, same output) |
+
+A forecast with ~20 clients and a few hundred invoices takes about a second; 200 clients with years of history take ~10 seconds (lower `--runs` to speed up).
 
 Install as a command with `pip install .`, then run `runway forecast ...`.
 
@@ -74,10 +77,10 @@ already open fell inside the best-to-worst band (it should, about 80% of the tim
 ## How the forecast works
 
 1. **Delay per client**: for every paid invoice, delay = paid date − due date. Recent invoices weigh more (×0.85 per step back), so a client that has recently become slower is noticed.
-2. **Few invoices?** A client with `n` paid invoices uses its own history with probability `n / (n + 3)`, otherwise the pooled delays of all clients. A brand-new client therefore behaves like your average client.
+2. **Few invoices?** A client with `n` paid invoices uses its own history with probability `n / (n + 3)`, otherwise the pooled delays of all clients. A brand-new client therefore behaves like your average client. With no payment history at all, a prior of 0-60 days late (mean about 19) is assumed, in line with a UK survey of 1,000+ freelancers where invoices were paid 18.5 days after the due date on average.
 3. **Open invoices** draw a payment day from the client's delays, but only from delays at least as long as the invoice is already overdue (an invoice 20 days late cannot have been paid yesterday). Invoices over 90 days late are treated as 50% never paid, over 180 days 90%.
 4. **Regular billing** is projected: clients with 3+ invoices on a steady rhythm (every 7–120 days) get future invoices at their median amount, so the forecast is not only money you have already billed.
-5. **Simulation**: 2000 possible futures are played day by day. *Worst* = 10th percentile of the balance, *best* = 90th, *likely* = median. The danger date is the first day the likely (or worst-case) line is below your buffer, next to the chance that any future dips below it.
+5. **Simulation**: 2000 possible futures are played day by day. In each future a client has a "mood" (a slow month is slow for all its invoices), so one big client can swing the result instead of averaging out. *Worst* = 10th percentile of the balance, *best* = 90th, *likely* = median. The danger date is the first day the likely (or worst-case) line is below your buffer, next to the chance that any future dips below it.
 6. **"What moves the danger date"** reruns the forecast with your biggest clients paying exactly on the due date.
 
 Limits: the backtest judges payment timing only, not your expenses. The forecast only knows invoices and expenses you give it (no new-client sales, no tax guesses), and percentile lines per day are not single paths. Treat it as a risk radar, not a promise.
